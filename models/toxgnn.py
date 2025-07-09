@@ -12,7 +12,7 @@ class ToxGNN(nn.Module):
             mlp = nn.Sequential(
                 nn.Linear(in_dim, out_dim),
                 nn.ReLU(),
-                nn.Dropout(0.1),
+                nn.Dropout(0.05),  # Reduced from 0.1
                 nn.Linear(out_dim, out_dim)
             )
             return GINEConv(mlp, edge_dim=n_edge_feats)
@@ -27,10 +27,10 @@ class ToxGNN(nn.Module):
         self.head = nn.Sequential(
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.1),  # Reduced from 0.3
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.05),  # Reduced from 0.2
             nn.Linear(128, n_tasks)
         )
 

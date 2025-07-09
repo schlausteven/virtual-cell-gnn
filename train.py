@@ -40,6 +40,39 @@ def eval_auc(loader):
     return float(torch.tensor(aucs).mean())
 
 
+def focal_loss(logits: torch.Tensor,
+               targets: torch.Tensor,
+               pos_weight: torch.Tensor,
+               alpha: float = 0.25,
+               gamma: float = 2.0) -> torch.Tensor:
+    mask = (targets != -1) & (~torch.isnan(targets))
+    if mask.sum() == 0:
+        return logits.sum() * 0.0
+
+    logits   = logits[mask].clamp(-20, 20)
+    targets  = targets[mask].clamp(min=0).float()
+
+    task_idx = mask.nonzero(as_tuple=False)[:, 1]
+    pw       = pos_weight[task_idx].to(logits.device)
+
+    prob  = torch.sigmoid(logits)
+    eps   = logits.new_tensor(1e-7)
+
+    # Focal loss components
+    pt = targets * prob + (1 - targets) * (1 - prob)
+    focal_weight = (1 - pt) ** gamma
+    
+    # Class balancing
+    alpha_weight = targets * alpha + (1 - targets) * (1 - alpha)
+    
+    # Combine with positive weight
+    final_weight = focal_weight * alpha_weight * pw
+    
+    element = -final_weight * (targets * torch.log(prob + eps) +
+                              (1 - targets) * torch.log(1 - prob + eps))
+    return element.mean()
+
+
 def masked_bce(logits: torch.Tensor,
                targets: torch.Tensor,
                pos_weight: torch.Tensor) -> torch.Tensor:
@@ -64,10 +97,10 @@ def masked_bce(logits: torch.Tensor,
 # Data and model setup
 train_loader, val_loader, _, pos_w = get_dataloaders(batch_size=64, frac_train=0.7, frac_val=0.2)
 DEVICE = torch.device("cpu")
-pos_w  = pos_w.clamp_(min=1, max=10)
+pos_w  = pos_w.clamp_(min=1, max=5)  # Reduced max from 10 to 5
 
 model = ToxGNN(n_node_feats=9, n_edge_feats=3, n_tasks=12).to(DEVICE)
-optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+optimizer = optim.AdamW(model.parameters(), lr=2e-4, weight_decay=5e-5)  # Increased LR, reduced weight decay
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=5)
 MAX_GRAD_NORM = 1.0
 
@@ -110,7 +143,7 @@ for epoch in range(NUM_EPOCHS):
             print(f"Epoch {epoch}, Batch {batch_idx}: Batch has all NaN targets")
             continue
             
-        loss_cpu = masked_bce(logits.cpu(), batch.y.cpu(), pos_w)
+        loss_cpu = focal_loss(logits.cpu(), batch.y.cpu(), pos_w)  # Use focal loss instead of masked_bce
         
         if torch.isnan(loss_cpu):
             print(f"Epoch {epoch}, Batch {batch_idx}: NaN loss detected!")

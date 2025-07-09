@@ -1,7 +1,7 @@
 import torch
 from torch_geometric.loader import DataLoader
 from models.toxgnn import ToxGNN
-from utils import smiles_to_data
+from gui.utils import smiles_to_data
 
 def test_model():
     # Test the trained model with various SMILES strings
