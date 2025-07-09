@@ -10,29 +10,43 @@ from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
 from torch_geometric.datasets import MoleculeNet
 from torch_geometric.loader import DataLoader
 
+# ---------------------------------------------------------------------------
+# Reproducibility helpers
+# ---------------------------------------------------------------------------
 SEED: int = 42
 random.seed(SEED)
 torch.manual_seed(SEED)
 
+# ---------------------------------------------------------------------------
+# Global constants
+# ---------------------------------------------------------------------------
 RAW_DIR = Path.home() / ".cache" / "tox21"
 TASK_NAMES: List[str] = [
     "NR-AR", "NR-AR-LBD", "NR-AhR", "NR-Aromatase", "NR-ER", "NR-ER-LBD",
     "NR-PPAR-gamma", "SR-ARE", "SR-ATAD5", "SR-HSE", "SR-MMP", "SR-p53",
 ]
 
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
 def _generate_scaffold(smiles: str) -> str:
+    """Return Bemis–Murcko scaffold SMILES for a molecule SMILES string."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return ""
     return MurckoScaffoldSmiles(mol=mol, includeChirality=False)
 
+
 def _scaffold_split(dataset, frac_train: float = 0.8, frac_val: float = 0.1
                     ) -> Tuple[List[int], List[int], List[int]]:
+    """Scaffold split (Bemis–Murcko). Returns train, val, test indices."""
     scaff2indices: dict[str, List[int]] = {}
     for idx, data in enumerate(dataset):
         scaffold = _generate_scaffold(data.smiles)
         scaff2indices.setdefault(scaffold, []).append(idx)
 
+    # sort buckets by descending size then shuffle equal‑size buckets
     buckets = sorted(scaff2indices.values(), key=len, reverse=True)
 
     n_total = len(dataset)
@@ -49,11 +63,13 @@ def _scaffold_split(dataset, frac_train: float = 0.8, frac_val: float = 0.1
             test_idx += bucket
     return train_idx, val_idx, test_idx
 
+
 def compute_pos_weights(dataset, indices: List[int]) -> torch.Tensor:
     y = dataset.data.y[indices]
     pos_counts = (y == 1).sum(dim=0).float()
     neg_counts = (y == 0).sum(dim=0).float()
     return neg_counts / (pos_counts + 1e-6)
+
 
 def get_dataloaders(batch_size: int = 128, frac_train: float = 0.8,
                     frac_val: float = 0.1, seed: int = SEED):
