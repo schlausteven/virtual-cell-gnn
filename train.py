@@ -41,13 +41,12 @@ def eval_auc(loader):
     return float(torch.tensor(aucs).mean())
 
 
-# ---------------------------------------------------------------------------
-# BCE helper that ignores missing labels (targets == -1, nan...)
-# ---------------------------------------------------------------------------
-
-def masked_bce(logits: torch.Tensor,
+def focal_loss(logits: torch.Tensor,
                targets: torch.Tensor,
-               pos_weight: torch.Tensor) -> torch.Tensor:
+               pos_weight: torch.Tensor,
+               alpha: float = 0.25,
+               gamma: float = 1.0) -> torch.Tensor:
+    """Focal loss that handles missing labels and class imbalance."""
     mask = (targets != -1) & (~torch.isnan(targets))
     if mask.sum() == 0:
         return logits.sum() * 0.0           
@@ -61,9 +60,19 @@ def masked_bce(logits: torch.Tensor,
     prob  = torch.sigmoid(logits)
     eps   = logits.new_tensor(1e-7)
 
-    element = -(pw * targets * torch.log(prob + eps) +
-                (1 - targets) * torch.log(1 - prob + eps))
-    return element.mean()
+    # Focal loss components
+    pt = targets * prob + (1 - targets) * (1 - prob)
+    focal_weight = (1 - pt) ** gamma
+    
+    # Apply positive weight
+    focal_weight = focal_weight * (pw * targets + (1 - targets))
+    
+    # BCE component
+    bce = -(targets * torch.log(prob + eps) + (1 - targets) * torch.log(1 - prob + eps))
+    
+    # Final focal loss
+    focal_loss = alpha * focal_weight * bce
+    return focal_loss.mean()
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +81,11 @@ def masked_bce(logits: torch.Tensor,
 train_loader, val_loader, _, pos_w = get_dataloaders(batch_size=64, frac_train=0.7,    
     frac_val=0.2 )
 DEVICE = torch.device("cpu")
-pos_w  = pos_w.clamp_(min=1, max=15)            
+
+pos_w  = pos_w.clamp_(min=1, max=8)
 
 model = ToxGNN(n_node_feats=9, n_edge_feats=3, n_tasks=12).to(DEVICE)
-optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)  
+optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=5e-4)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=5)
 MAX_GRAD_NORM = 1.0  
 
@@ -123,7 +133,7 @@ for epoch in range(NUM_EPOCHS):
             print(f"Epoch {epoch}, Batch {batch_idx}: Batch has all NaN targets")
             continue
             
-        loss_cpu = focal_loss(logits.cpu(), batch.y.cpu(), pos_w)  # Use focal loss instead of masked_bce
+        loss_cpu = focal_loss(logits.cpu(), batch.y.cpu(), pos_w)
         
         if torch.isnan(loss_cpu):
             print(f"Epoch {epoch}, Batch {batch_idx}: NaN loss detected!")
@@ -186,4 +196,4 @@ for epoch in range(NUM_EPOCHS):
             print(f"Early stopping: val_AUC plateaued for {patience} epochs.")
             break
 
-print(f"Training completed. Best validation AUC: {best_auc:.4f}")
+print(f"Training completed. Best validation AUC: {best_auc:.4f}") 

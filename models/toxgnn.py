@@ -12,10 +12,9 @@ class ToxGNN(nn.Module):
             mlp = nn.Sequential(
                 nn.Linear(in_dim, out_dim),
                 nn.ReLU(),
-                nn.Dropout(0.1),  # Add dropout to prevent overfitting
-                nn.Linear(out_dim, out_dim)
+                nn.Dropout(0.1),  
+                nn.Linear(out_dim, out_dim) # Add dropout to prevent overfitting
             )
-            # 👇 tell GINEConv how wide the edge feature vectors are
             return GINEConv(mlp, edge_dim=n_edge_feats)
 
         self.convs = nn.ModuleList([
@@ -26,12 +25,12 @@ class ToxGNN(nn.Module):
 
         self.pool = global_add_pool
         self.head = nn.Sequential(
-            nn.BatchNorm1d(256),        # ⇐ new layer spreads activations
+            nn.BatchNorm1d(256),        
             nn.ReLU(),
-            nn.Dropout(0.3),            # Increased dropout
-            nn.Linear(256, 128),        # Add intermediate layer
+            nn.Dropout(0.3),            
+            nn.Linear(256, 128),        
             nn.ReLU(),
-            nn.Dropout(0.05),  # Reduced from 0.2
+            nn.Dropout(0.05), 
             nn.Linear(128, n_tasks)
         )
 
