@@ -12,9 +12,10 @@ class ToxGNN(nn.Module):
             mlp = nn.Sequential(
                 nn.Linear(in_dim, out_dim),
                 nn.ReLU(),
-                nn.Dropout(0.05),  # Reduced from 0.1
+                nn.Dropout(0.1),  # Add dropout to prevent overfitting
                 nn.Linear(out_dim, out_dim)
             )
+            # 👇 tell GINEConv how wide the edge feature vectors are
             return GINEConv(mlp, edge_dim=n_edge_feats)
 
         self.convs = nn.ModuleList([
@@ -25,10 +26,10 @@ class ToxGNN(nn.Module):
 
         self.pool = global_add_pool
         self.head = nn.Sequential(
-            nn.BatchNorm1d(256),
+            nn.BatchNorm1d(256),        # ⇐ new layer spreads activations
             nn.ReLU(),
-            nn.Dropout(0.1),  # Reduced from 0.3
-            nn.Linear(256, 128),
+            nn.Dropout(0.3),            # Increased dropout
+            nn.Linear(256, 128),        # Add intermediate layer
             nn.ReLU(),
             nn.Dropout(0.05),  # Reduced from 0.2
             nn.Linear(128, n_tasks)
@@ -37,6 +38,7 @@ class ToxGNN(nn.Module):
     def forward(self, x, edge_index, edge_attr, batch):
         edge_attr = edge_attr.float()
         
+        # Check for NaN in inputs
         if torch.isnan(x).any():
             print("Warning: NaN detected in node features in model forward pass")
             x = torch.zeros_like(x)
@@ -47,18 +49,21 @@ class ToxGNN(nn.Module):
         for i, conv in enumerate(self.convs):
             x = F.relu(conv(x, edge_index, edge_attr))
             
+            # Check for NaN after each convolution
             if torch.isnan(x).any():
                 print(f"Warning: NaN detected after conv layer {i}")
                 x = torch.zeros_like(x)
         
         x = self.pool(x, batch)
         
+        # Check for NaN after pooling
         if torch.isnan(x).any():
             print("Warning: NaN detected after pooling")
             x = torch.zeros_like(x)
         
         output = self.head(x)
         
+        # Check for NaN in final output
         if torch.isnan(output).any():
             print("Warning: NaN detected in model output")
             output = torch.zeros_like(output)

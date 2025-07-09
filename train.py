@@ -4,11 +4,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 import csv
 from pathlib import Path
-from sklearn.metrics import roc_auc_score
-import numpy as np
 
 from tox21_dataset import get_dataloaders
 from models.toxgnn import ToxGNN
+
+from sklearn.metrics import roc_auc_score
+import numpy as np
 
 def eval_auc(loader):
     model.eval()
@@ -40,51 +41,22 @@ def eval_auc(loader):
     return float(torch.tensor(aucs).mean())
 
 
-def focal_loss(logits: torch.Tensor,
-               targets: torch.Tensor,
-               pos_weight: torch.Tensor,
-               alpha: float = 0.25,
-               gamma: float = 2.0) -> torch.Tensor:
-    mask = (targets != -1) & (~torch.isnan(targets))
-    if mask.sum() == 0:
-        return logits.sum() * 0.0
-
-    logits   = logits[mask].clamp(-20, 20)
-    targets  = targets[mask].clamp(min=0).float()
-
-    task_idx = mask.nonzero(as_tuple=False)[:, 1]
-    pw       = pos_weight[task_idx].to(logits.device)
-
-    prob  = torch.sigmoid(logits)
-    eps   = logits.new_tensor(1e-7)
-
-    # Focal loss components
-    pt = targets * prob + (1 - targets) * (1 - prob)
-    focal_weight = (1 - pt) ** gamma
-    
-    # Class balancing
-    alpha_weight = targets * alpha + (1 - targets) * (1 - alpha)
-    
-    # Combine with positive weight
-    final_weight = focal_weight * alpha_weight * pw
-    
-    element = -final_weight * (targets * torch.log(prob + eps) +
-                              (1 - targets) * torch.log(1 - prob + eps))
-    return element.mean()
-
+# ---------------------------------------------------------------------------
+# BCE helper that ignores missing labels (targets == -1, nan...)
+# ---------------------------------------------------------------------------
 
 def masked_bce(logits: torch.Tensor,
                targets: torch.Tensor,
                pos_weight: torch.Tensor) -> torch.Tensor:
     mask = (targets != -1) & (~torch.isnan(targets))
     if mask.sum() == 0:
-        return logits.sum() * 0.0
+        return logits.sum() * 0.0           
 
     logits   = logits[mask].clamp(-20, 20)
     targets  = targets[mask].clamp(min=0).float()
 
-    task_idx = mask.nonzero(as_tuple=False)[:, 1]
-    pw       = pos_weight[task_idx].to(logits.device)
+    task_idx = mask.nonzero(as_tuple=False)[:, 1]      
+    pw       = pos_weight[task_idx].to(logits.device)  
 
     prob  = torch.sigmoid(logits)
     eps   = logits.new_tensor(1e-7)
@@ -94,26 +66,31 @@ def masked_bce(logits: torch.Tensor,
     return element.mean()
 
 
-# Data and model setup
-train_loader, val_loader, _, pos_w = get_dataloaders(batch_size=64, frac_train=0.7, frac_val=0.2)
+# ---------------------------------------------------------------------------
+# Data & model
+# ---------------------------------------------------------------------------
+train_loader, val_loader, _, pos_w = get_dataloaders(batch_size=64, frac_train=0.7,    
+    frac_val=0.2 )
 DEVICE = torch.device("cpu")
-pos_w  = pos_w.clamp_(min=1, max=5)  # Reduced max from 10 to 5
+pos_w  = pos_w.clamp_(min=1, max=15)            
 
 model = ToxGNN(n_node_feats=9, n_edge_feats=3, n_tasks=12).to(DEVICE)
-optimizer = optim.AdamW(model.parameters(), lr=2e-4, weight_decay=5e-5)  # Increased LR, reduced weight decay
+optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)  
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=5)
-MAX_GRAD_NORM = 1.0
+MAX_GRAD_NORM = 1.0  
 
-# Training loop
+# ---------------------------------------------------------------------------
+# Train
+# ---------------------------------------------------------------------------
 NUM_EPOCHS = 50
 best_auc = 0.0
 patience = 10
 pat_ctr = 0
 
-# Setup logging
+# Setup CSV logging
 log_path = Path("log.csv")
 if log_path.exists():
-    log_path.unlink()
+    log_path.unlink()  
 with log_path.open("w", newline="") as f:
     csv.writer(f).writerow(["epoch", "train_loss", "val_auc", "lr"])
 
@@ -126,6 +103,7 @@ for epoch in range(NUM_EPOCHS):
         batch = batch.to(DEVICE)
         optimizer.zero_grad()
 
+        # Check for NaN in inputs before model forward pass
         if torch.isnan(batch.x).any():
             print(f"Epoch {epoch}, Batch {batch_idx}: NaN in node features!")
             continue
@@ -135,10 +113,12 @@ for epoch in range(NUM_EPOCHS):
 
         logits = model(batch.x, batch.edge_index, batch.edge_attr.float(), batch.batch)
 
+        # Check for NaN in model output
         if torch.isnan(logits).any():
             print(f"Epoch {epoch}, Batch {batch_idx}: NaN in model output!")
             continue
         
+        # Check for NaN in targets
         if torch.isnan(batch.y).all():
             print(f"Epoch {epoch}, Batch {batch_idx}: Batch has all NaN targets")
             continue
@@ -152,6 +132,7 @@ for epoch in range(NUM_EPOCHS):
         loss = loss_cpu.to(DEVICE)
         loss.backward()
         
+        # Check for NaN gradients
         has_nan_grad = False
         for name, param in model.named_parameters():
             if param.grad is not None and torch.isnan(param.grad).any():
@@ -164,11 +145,13 @@ for epoch in range(NUM_EPOCHS):
             optimizer.zero_grad()
             continue
         
+        # Gradient clipping
         torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
         optimizer.step()
         running += loss.item()
         num_batches += 1
 
+    # Check model parameters after training
     has_nan_params = False
     for name, param in model.named_parameters():
         if torch.isnan(param).any():
@@ -184,11 +167,14 @@ for epoch in range(NUM_EPOCHS):
     avg_loss = running / num_batches if num_batches > 0 else float('inf')
     print(f"Epoch {epoch:02d} | mean_train_loss: {avg_loss:.4f} | val_auc: {val_auc:.4f} | lr: {optimizer.param_groups[0]['lr']:.2e}")
     
+    # Log to CSV
     with log_path.open("a", newline="") as f:
         csv.writer(f).writerow([epoch, f"{avg_loss:.4f}", f"{val_auc:.4f}", f"{optimizer.param_groups[0]['lr']:.2e}"])
     
+    # Update learning rate based on validation performance
     scheduler.step(val_auc)
     
+    # Save best model
     if val_auc > best_auc + 1e-4:
         best_auc = val_auc
         pat_ctr = 0

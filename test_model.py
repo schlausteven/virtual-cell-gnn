@@ -4,8 +4,6 @@ from models.toxgnn import ToxGNN
 from gui.utils import smiles_to_data
 
 def test_model():
-    # Test the trained model with various SMILES strings
-    
     print("Loading model...")
     model = ToxGNN(n_node_feats=9, n_edge_feats=3, n_tasks=12)
     model.load_state_dict(torch.load('final_weights.pt', map_location='cpu'))
@@ -89,7 +87,7 @@ def test_model():
         for j in range(i+1, min(4, len(all_predictions))):
             pred1 = all_predictions[i]
             pred2 = all_predictions[j]
-            
+
             avg_diff = sum(abs(p1 - p2) for p1, p2 in zip(pred1, pred2)) / len(pred1)
             print(f"  {results[i]['name']} vs {results[j]['name']}: avg diff = {avg_diff:.3f}")
     
@@ -98,7 +96,7 @@ def test_model():
     prob_std = torch.tensor(all_probs_flat).std().item()
     print(f"  Standard deviation of all predictions: {prob_std:.3f}")
     if prob_std < 0.1:
-        print("WARNING: Low variance in predictions - possible model collapse")
+        print("Low variance in predictions - possible model collapse")
     else:
         print("Good variance in predictions")
     
@@ -107,11 +105,11 @@ def test_model():
     total_extreme_low = sum(r['extreme_low'] for r in results)
     total_predictions = len(results) * 12
     
-    print(f"Extreme high predictions: {total_extreme_high}/{total_predictions} ({total_extreme_high/total_predictions*100:.1f}%)")
-    print(f"Extreme low predictions: {total_extreme_low}/{total_predictions} ({total_extreme_low/total_predictions*100:.1f}%)")
+    print(f"  Extreme high predictions: {total_extreme_high}/{total_predictions} ({total_extreme_high/total_predictions*100:.1f}%)")
+    print(f"  Extreme low predictions: {total_extreme_low}/{total_predictions} ({total_extreme_low/total_predictions*100:.1f}%)")
     
     if total_extreme_high/total_predictions > 0.5 or total_extreme_low/total_predictions > 0.5:
-        print("WARNING: Too many extreme predictions - model may be overconfident")
+        print("Too many extreme predictions - model may be overconfident")
     else:
         print("Reasonable number of extreme predictions")
     
