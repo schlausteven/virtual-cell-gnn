@@ -71,7 +71,7 @@ This will:
 To test the model with various molecules:
 
 ```bash
-python eval.py
+python test_model.py
 ```
 
 This tests the model on 8 different molecules and provides analysis of:
